@@ -1,17 +1,15 @@
 import React, { useState, useEffect, useContext, useRef } from "react";
+import { UserContext } from "../context/user.context";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "../config/axios";
 import {
   initializeSocket,
-  recieveMessage,
+  receiveMessage,
   sendMessage,
 } from "../config/socket";
-import { UserContext } from "../context/user.context";
 import Markdown from "markdown-to-jsx";
-// import { highlightCode } from "../config/highlight.js";
 import hljs from "highlight.js";
-import "highlight.js/styles/nord.css";
-import { getWebContainer } from "../config/webContainer";
+import { getWebContainer } from "../config/webcontainer";
 
 function SyntaxHighlightedCode(props) {
   const ref = useRef(null);
@@ -30,102 +28,42 @@ function SyntaxHighlightedCode(props) {
 
 const Project = () => {
   const location = useLocation();
+
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState(new Set());
   const [project, setProject] = useState(location.state.project);
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState([]);
   const { user } = useContext(UserContext);
-  const messageBox = useRef(null);
+  const messageBox = React.createRef();
+
+  const [users, setUsers] = useState([]);
+  const [messages, setMessages] = useState([]); // New state variable for messages
   const [fileTree, setFileTree] = useState({});
+
   const [currentFile, setCurrentFile] = useState(null);
   const [openFiles, setOpenFiles] = useState([]);
+
   const [webContainer, setWebContainer] = useState(null);
   const [iframeUrl, setIframeUrl] = useState(null);
+
   const [runProcess, setRunProcess] = useState(null);
+  const [isDarkTheme, setIsDarkTheme] = useState(false);
 
-  useEffect(() => {
-    initializeSocket(project._id);
-
-    if (!webContainer) {
-      getWebContainer().then((container) => {
-        setWebContainer(container);
-        console.log("Container started");
-      });
-    }
-
-    recieveMessage("project-message", (data) => {
-      const message = JSON.parse(data.message);
-      console.log(message);
-      webContainer?.mount(message.fileTree);
-      if (message.fileTree) {
-        setFileTree(message.fileTree);
-      }
-      setMessages((prevMessages) => [...prevMessages, data]);
-    });
-
-    axios
-      .get(`/projects/get-project/${location.state.project._id}`)
-      .then((res) => {
-        setProject(res.data.project);
-        setFileTree(res.data.project.fileTree);
-      });
-
-    axios
-      .get("/users/all")
-      .then((res) => {
-        setUsers(res.data.users);
-      })
-      .catch((err) => {
-        console.log(err);
-      });
-  }, []);
-
-  const send = () => {
-    sendMessage("project-message", {
-      message,
-      sender: user,
-    });
-
-    setMessages((prevMessages) => [...prevMessages, { sender: user, message }]);
-
-    setMessage("");
-  };
-
-  function WriteAiMessage(message) {
-    const messageObject = JSON.parse(message);
-
-    return (
-      <div className="overflow-auto bg-slate-950 text-white rounded-sm p-2">
-        <Markdown
-          children={messageObject.text}
-          options={{
-            overrides: {
-              code: SyntaxHighlightedCode,
-            },
-          }}
-        />
-      </div>
-    );
-  }
-
-  const handleUserClick = (userId) => {
+  const handleUserClick = (id) => {
     setSelectedUserId((prevSelectedUserId) => {
       const newSelectedUserId = new Set(prevSelectedUserId);
-
-      if (newSelectedUserId.has(userId)) {
-        newSelectedUserId.delete(userId);
+      if (newSelectedUserId.has(id)) {
+        newSelectedUserId.delete(id);
       } else {
-        newSelectedUserId.add(userId);
+        newSelectedUserId.add(id);
       }
 
       return newSelectedUserId;
     });
   };
 
-  const addCollaborator = () => {
+  function addCollaborators() {
     axios
       .put("/projects/add-user", {
         projectId: location.state.project._id,
@@ -138,7 +76,81 @@ const Project = () => {
       .catch((err) => {
         console.log(err);
       });
+  }
+
+  const send = () => {
+    sendMessage("project-message", {
+      message,
+      sender: user,
+    });
+    setMessages((prevMessages) => [...prevMessages, { sender: user, message }]);
+    setMessage("");
   };
+
+  function WriteAiMessage(message) {
+    const messageObject = JSON.parse(message);
+
+    return (
+      <div className="overflow-auto bg-gray-800 text-white rounded-md p-4">
+        <Markdown
+          children={messageObject.text}
+          options={{
+            overrides: {
+              code: SyntaxHighlightedCode,
+            },
+          }}
+        />
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    initializeSocket(project._id);
+
+    if (!webContainer) {
+      getWebContainer().then((container) => {
+        setWebContainer(container);
+        console.log("container started");
+      });
+    }
+
+    receiveMessage("project-message", (data) => {
+      console.log(data);
+
+      if (data.sender._id == "ai") {
+        const message = JSON.parse(data.message);
+
+        console.log(message);
+
+        webContainer?.mount(message.fileTree);
+
+        if (message.fileTree) {
+          setFileTree(message.fileTree || {});
+        }
+        setMessages((prevMessages) => [...prevMessages, data]);
+      } else {
+        setMessages((prevMessages) => [...prevMessages, data]);
+      }
+    });
+
+    axios
+      .get(`/projects/get-project/${location.state.project._id}`)
+      .then((res) => {
+        console.log(res.data.project);
+
+        setProject(res.data.project);
+        setFileTree(res.data.project.fileTree || {});
+      });
+
+    axios
+      .get("/users/all")
+      .then((res) => {
+        setUsers(res.data.users);
+      })
+      .catch((err) => {
+        console.log(err);
+      });
+  }, []);
 
   function saveFileTree(ft) {
     axios
@@ -154,36 +166,52 @@ const Project = () => {
       });
   }
 
-  const scrollToBottom = () => {
+  function scrollToBottom() {
     messageBox.current.scrollTop = messageBox.current.scrollHeight;
+  }
+
+  const closeFile = (file) => {
+    setOpenFiles((prevOpenFiles) => prevOpenFiles.filter((f) => f !== file));
+    if (currentFile === file) {
+      setCurrentFile(openFiles.length > 1 ? openFiles[0] : null);
+    }
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  const deleteFile = (file) => {
+    const updatedFileTree = { ...fileTree };
+    delete updatedFileTree[file];
+    setFileTree(updatedFileTree);
+    saveFileTree(updatedFileTree);
+    closeFile(file);
+  };
 
   return (
-    <main className="h-screen w-screen flex overflow-hidden">
-      <section className="left relative flex flex-col h-full min-w-80 bg-slate-300">
-        <header className="flex justify-between items-center p-2 px-4 w-full absolute top-0 bg-slate-100">
-          <button className="flex gap-2" onClick={() => setIsModalOpen(true)}>
-            <i className="ri-add-large-fill mr-1"></i>
+    <main className={`h-screen w-screen flex overflow-hidden ${isDarkTheme ? "bg-gray-900 text-white" : "bg-white text-black"}`}>
+      <section className={`left relative flex flex-col h-full min-w-80 ${isDarkTheme ? "bg-gray-800" : "bg-gray-200"}`}>
+        <header className={`flex justify-between items-center p-4 w-full ${isDarkTheme ? "bg-gray-700" : "bg-gray-100"} shadow-md`}>
+          <button className="flex gap-2 items-center text-blue-600" onClick={() => setIsModalOpen(true)}>
+            <i className="ri-add-fill mr-1"></i>
             <p>Add Collaborator</p>
           </button>
-          <button
-            onClick={() => {
-              setIsSidePanelOpen(!isSidePanelOpen);
-            }}
-            className="p-2"
-          >
-            <i className="ri-group-fill"></i>
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setIsSidePanelOpen(!isSidePanelOpen)}
+              className="p-2 text-blue-600"
+            >
+              <i className="ri-group-fill"></i>
+            </button>
+            <button
+              onClick={() => setIsDarkTheme(!isDarkTheme)}
+              className="p-2 text-blue-600"
+            >
+              {isDarkTheme ? <i className="ri-sun-fill"></i> : <i className="ri-moon-fill"></i>}
+            </button>
+          </div>
         </header>
-
-        <div className="conversation-area pt-14 pb-10 flex-grow flex flex-col overflow-hidden relative">
+        <div className="conversation-area pt-16 pb-10 flex-grow flex flex-col overflow-hidden relative">
           <div
             ref={messageBox}
-            className="message-box p-1 flex-grow flex flex-col gap-1 overflow-auto max-h-full scrollbar-hide"
+            className="message-box p-4 flex-grow flex flex-col gap-2 overflow-auto max-h-full scrollbar-hide"
           >
             {messages.map((msg, index) => (
               <div
@@ -192,7 +220,7 @@ const Project = () => {
                   msg.sender._id === "ai" ? "max-w-80" : "max-w-52"
                 } ${
                   msg.sender._id == user._id.toString() && "ml-auto"
-                }  message flex flex-col p-2 bg-slate-50 w-fit rounded-md`}
+                }  message flex flex-col p-4 ${isDarkTheme ? "bg-gray-700" : "bg-white"} shadow-md rounded-md`}
               >
                 <small className="opacity-65 text-xs">{msg.sender.email}</small>
                 <div className="text-sm">
@@ -205,93 +233,108 @@ const Project = () => {
               </div>
             ))}
           </div>
+
           <div className="input-field absolute bottom-0 w-full flex">
             <input
               value={message}
-              onChange={(e) => {
-                setMessage(e.target.value);
-              }}
-              className="p-2 px-4 border-none outline-none flex-grow"
+              onChange={(e) => setMessage(e.target.value)}
+              className={`p-4 border-none outline-none flex-grow ${isDarkTheme ? "bg-gray-700 text-white" : "bg-gray-100"} rounded-l-md`}
               type="text"
               placeholder="Enter Message"
             />
-            <button onClick={send} className="px-5 bg-slate-900 text-white">
+            <button onClick={send} className="px-6 bg-blue-600 text-white rounded-r-md">
               <i className="ri-send-plane-fill"></i>
             </button>
           </div>
         </div>
         <div
-          className={`flex flex-col gap-2 side-panel w-full h-full bg-slate-50 absolute right-[100%] transition-all ${
-            isSidePanelOpen ? "translate-x-full" : ""
-          } top-0`}
+          className={`side-panel w-full h-full flex flex-col gap-2 ${isDarkTheme ? "bg-gray-800" : "bg-white"} absolute transition-transform ${
+            isSidePanelOpen ? "translate-x-0" : "-translate-x-full"
+          } top-0 shadow-md`}
         >
-          <header className="flex justify-between items-center p-2 px-3 bg-slate-300">
-            <h1 className="text-lg font-bold">Collaborators</h1>
+          <header className={`flex justify-between items-center px-4 py-2 ${isDarkTheme ? "bg-gray-700" : "bg-gray-200"} shadow-sm`}>
+            <h1 className="font-semibold text-lg">Collaborators</h1>
             <button
-              onClick={() => {
-                setIsSidePanelOpen(!isSidePanelOpen);
-              }}
-              className="p-2"
+              onClick={() => setIsSidePanelOpen(!isSidePanelOpen)}
+              className="p-2 text-gray-600"
             >
               <i className="ri-close-fill"></i>
             </button>
           </header>
-          <div className="users flex flex-col gap-2 overflow-auto">
+          <div className="users flex flex-col gap-2 p-4 overflow-auto">
             {project.users &&
               project.users.map((user) => (
                 <div
                   key={user._id}
-                  className="user flex gap-2 items-center hover:bg-slate-300 p-2 cursor-pointer"
+                  className={`user flex gap-2 items-center hover:${isDarkTheme ? "bg-gray-700" : "bg-gray-100"} p-2 cursor-pointer rounded-md`}
                 >
-                  <div className="aspect-square rounded-full p-3 text-white w-fit h-fit flex items-center justify-center bg-slate-500">
+                  <div className="aspect-square rounded-full p-3 text-white w-fit h-fit flex items-center justify-center bg-gray-500">
                     <i className="ri-user-3-fill"></i>
                   </div>
-                  <h1 className="font-semibold text-lg ">{user.email}</h1>
+                  <h1 className="font-semibold text-lg">{user.email}</h1>
                 </div>
               ))}
           </div>
         </div>
       </section>
+
       <section className="right flex-grow h-full flex">
-        <div className="explorer h-full max-w-64 min-w-52 bg-slate-200">
-          <div className="file-tree w-full">
+        <div className={`explorer h-full max-w-64 min-w-52 ${isDarkTheme ? "bg-gray-700" : "bg-gray-100"} shadow-md`}>
+          <div className="file-tree w-full p-4 space-y-2">
             {Object.keys(fileTree).map((file, index) => (
-              <button
-                onClick={() => {
-                  setCurrentFile(file);
-                  setOpenFiles([...new Set([...openFiles, file])]);
-                }}
-                className="tree-elem cursor-pointer p-2 px-4 flex items-center gap-2 bg-slate-300 w-full"
-              >
-                <p className="font-semibold text-md">{file}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="code-editor flex flex-col flex-grow h-full">
-          <div className="top flex justify-between w-full">
-            <div className="files flex">
-              {openFiles.map((file, index) => (
+              <div key={index} className="relative flex items-center">
                 <button
                   onClick={() => {
                     setCurrentFile(file);
+                    setOpenFiles([...new Set([...openFiles, file])]);
                   }}
-                  className={`open-file cursor-pointer p-1 px-4 flex items-center w-fit gap-2 bg-slate-300 ${
-                    currentFile === file ? "bg-slate-400" : ""
-                  }`}
+                  className={`tree-elem cursor-pointer p-2 px-4 flex items-center gap-2 ${isDarkTheme ? "bg-gray-600" : "bg-gray-200"} w-full rounded-md hover:${isDarkTheme ? "bg-gray-500" : "bg-gray-300"}`}
                 >
-                  <p className="text-md font-semibold p-2">{file}</p>
+                  <p className="font-semibold text-md">{file}</p>
                 </button>
+                <button
+                  onClick={() => deleteFile(file)}
+                  className="absolute right-0 top-1/2 transform -translate-y-1/2 p-2 text-red-600"
+                >
+                  <i className="ri-delete-bin-6-fill"></i>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="code-editor flex flex-col flex-grow h-full">
+          <div className={`top flex justify-between w-full p-4 ${isDarkTheme ? "bg-gray-700" : "bg-gray-100"} shadow-md`}>
+            <div className="files flex items-center justify-center gap-2">
+              {openFiles.map((file, index) => (
+                <div key={index} className="relative flex items-center">
+                  <button
+                    onClick={() => setCurrentFile(file)}
+                    className={`open-file cursor-pointer p-2 px-4 flex items-center w-fit gap-2 ${isDarkTheme ? "bg-gray-700" : "bg-gray-200"} rounded-md ${
+                      currentFile === file ? (isDarkTheme ? "bg-gray-600" : "bg-gray-300") : ""
+                    }`}
+                  >
+                    <p className="text-md font-semibold">{file}</p>
+                  </button>
+                  <button
+                    onClick={() => closeFile(file)}
+                    className="absolute right-0 top-1/2 transform -translate-y-1/2 pl-5 text-red-600"
+                  >
+                    <i className="ri-close-fill"></i>
+                  </button>
+                </div>
               ))}
             </div>
 
             <div className="actions flex gap-2">
               <button
                 onClick={async () => {
-                  await webContainer?.mount(fileTree);
+                  await webContainer.mount(fileTree);
+
                   const installProcess = await webContainer.spawn("npm", [
                     "install",
                   ]);
+
                   installProcess.output.pipeTo(
                     new WritableStream({
                       write(chunk) {
@@ -299,12 +342,15 @@ const Project = () => {
                       },
                     })
                   );
+
                   if (runProcess) {
                     runProcess.kill();
                   }
+
                   let tempRunProcess = await webContainer.spawn("npm", [
                     "start",
                   ]);
+
                   tempRunProcess.output.pipeTo(
                     new WritableStream({
                       write(chunk) {
@@ -312,21 +358,23 @@ const Project = () => {
                       },
                     })
                   );
+
                   setRunProcess(tempRunProcess);
+
                   webContainer.on("server-ready", (port, url) => {
                     console.log(port, url);
                     setIframeUrl(url);
                   });
                 }}
-                className="p-2 px-4 bg-slate-300 text-white"
+                className="p-2 px-4 bg-blue-600 text-white rounded-md"
               >
                 Run
               </button>
             </div>
           </div>
-          <div className="bottom h-full">
+          <div className={`bottom h-full overflow-auto p-4 ${isDarkTheme ? "bg-gray-800 text-white" : "bg-gray-50 text-black"}`}>
             {fileTree[currentFile] && (
-              <div className="code-editor-area h-full overflow-auto flex-grow bg-slate-100">
+              <div className={`code-editor-area h-full overflow-auto flex-grow ${isDarkTheme ? "bg-gray-800 text-white" : "bg-white text-black"} shadow-md rounded-md p-4`}>
                 <pre className="hljs h-full">
                   <code
                     className="hljs h-full outline-none"
@@ -364,46 +412,52 @@ const Project = () => {
         </div>
 
         {iframeUrl && webContainer && (
-          <div className="flex min-w-96 flex-col h-full">
-            <div className="address-bar">
+          <div className="flex min-w-96 flex-col h-full bg-gray-100 shadow-md rounded-md">
+            <div className="address-bar p-4">
               <input
                 type="text"
                 onChange={(e) => setIframeUrl(e.target.value)}
                 value={iframeUrl}
-                className="w-full p-2 px-4 bg-slate-200"
+                className="w-full p-2 px-4 bg-gray-200 rounded-md"
               />
             </div>
-            <iframe src={iframeUrl} className="w-full h-full"></iframe>
+            <iframe src={iframeUrl} className="w-full h-full rounded-md"></iframe>
           </div>
         )}
       </section>
+
       {isModalOpen && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="bg-white p-6 rounded-md shadow-md w-full max-w-md max-h-screen overflow-auto">
-            <h2 className="text-xl mb-4">Select User</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <div className={`p-6 rounded-md shadow-md w-full max-w-md max-h-screen overflow-auto ${isDarkTheme ? "bg-gray-800 text-white" : "bg-white text-black"}`}>
+            <header className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold">Select User</h2>
+              <button onClick={() => setIsModalOpen(false)} className="p-2 text-gray-600">
+                <i className="ri-close-fill"></i>
+              </button>
+            </header>
             <div className="users-list max-h-60 overflow-auto flex flex-col gap-2">
               {users.map((user) => (
                 <div
                   key={user._id}
                   onClick={() => handleUserClick(user._id)}
-                  className={`user flex gap-2 items-center hover:bg-slate-300 ${
+                  className={`user flex gap-2 items-center hover:${isDarkTheme ? "bg-gray-700" : "bg-gray-100"} ${
                     Array.from(selectedUserId).indexOf(user._id) !== -1
-                      ? "bg-slate-200"
+                      ? isDarkTheme ? "bg-gray-700" : "bg-gray-200"
                       : ""
-                  } p-2 cursor-pointer`}
+                  } p-2 cursor-pointer rounded-md`}
                 >
-                  <div className="aspect-square relative rounded-full p-3 text-white w-fit h-fit flex items-center justify-center bg-slate-500">
+                  <div className="aspect-square relative rounded-full p-3 text-white w-fit h-fit flex items-center justify-center bg-gray-500">
                     <i className="ri-user-3-fill absolute"></i>
                   </div>
-                  <h1 className="font-semibold text-lg ">{user.email}</h1>
+                  <h1 className="font-semibold text-lg">{user.email}</h1>
                 </div>
               ))}
             </div>
             <div className="flex justify-end mt-4 gap-2">
               <button
                 type="button"
-                className="px-4 py-2 bg-blue-500 text-white rounded-md bottom-4 right-4"
-                onClick={addCollaborator}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md"
+                onClick={addCollaborators}
               >
                 Add Collaborators
               </button>
